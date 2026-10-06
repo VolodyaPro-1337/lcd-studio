@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+dist_new/
+*.zip
+# скачивается tools/fetch_lhm.py
+lhm/
