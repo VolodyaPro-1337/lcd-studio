@@ -1,5 +1,6 @@
 ﻿# Сборка LCD Studio. По умолчанию в dist\LCD Studio; -Dist задаёт другую папку
-param([string]$Dist = "")
+# -NoAdmin — без запроса прав администратора при запуске
+param([string]$Dist = "", [switch]$NoAdmin)
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $py = "$root\.venv\Scripts\python.exe"
@@ -17,6 +18,8 @@ $piArgs = @("-m", "PyInstaller", "--noconfirm", "--windowed", "--name", "LCD Stu
     # датчики: LibreHardwareMonitor (.NET) через pythonnet
     "--add-data", "$root\lhm;lhm", "--hidden-import", "clr", "--collect-all", "pythonnet", "--collect-all", "clr_loader")
 foreach ($m in $exclude) { $piArgs += "--exclude-module", $m }
+# права администратора нужны OpenRGB (память, часть плат) и датчикам CPU
+if (-not $NoAdmin) { $piArgs += "--uac-admin" }
 # PyInstaller пишет предупреждения в stderr, PowerShell 5.1 считает это ошибкой
 $ErrorActionPreference = "Continue"
 & $py @piArgs "$root\run.pyw" 2>&1 | Out-File "$root\build\pyinstaller.log" -Encoding utf8

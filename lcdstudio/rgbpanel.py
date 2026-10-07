@@ -8,7 +8,8 @@ from PySide6.QtWidgets import (
 )
 
 from .props import color_button
-from .rgb import MODES, download_openrgb, find_openrgb
+from .rgb import MODES, download_openrgb, find_openrgb, install_pawnio, pawnio_installed
+from .sensors import is_admin
 from .sensorpicker import pick_sensor, sensor_title
 
 DEFAULTS = {"enabled": True, "mode": "rainbow", "color": "#ff00c8ff", "color2": "#ffff0080", "speed": 50,
@@ -39,6 +40,11 @@ class RgbPanel(QWidget):
         self.dl = QPushButton("Скачать OpenRGB")
         self.dl.clicked.connect(self._download)
         row.addWidget(self.dl)
+        self.pawn = QPushButton("Установить драйвер PawnIO")
+        self.pawn.setToolTip("Нужен OpenRGB для подсветки памяти и части материнских плат, "
+                             "а мониторингу — для температуры CPU")
+        self.pawn.clicked.connect(self._install_pawnio)
+        row.addWidget(self.pawn)
         rescan = QPushButton("Обновить устройства")
         rescan.clicked.connect(lambda: setattr(self.sync, "reconfigure", True))
         row.addWidget(rescan)
@@ -190,8 +196,28 @@ class RgbPanel(QWidget):
         self._dl_text, self._dl_done = "Скачивание...", False
         threading.Thread(target=work, daemon=True).start()
 
+    def _install_pawnio(self):
+        self.pawn.setEnabled(False)
+
+        def work():
+            try:
+                install_pawnio(lambda t: setattr(self, "_dl_text", t))
+                self._dl_text = "После установки PawnIO нажмите «Обновить устройства» (или перезапустите программу)"
+            except Exception as e:
+                self._dl_text = f"PawnIO: {e}"
+            self._dl_done = True
+        self._dl_text, self._dl_done = "Скачивание PawnIO...", False
+        threading.Thread(target=work, daemon=True).start()
+
     def _refresh(self):
+        if not hasattr(self, "_pawn_checked") or self._pawn_checked % 10 == 0:
+            ok = pawnio_installed()
+            self.pawn.setVisible(not ok)
+            self.pawn.setEnabled(True)
+        self._pawn_checked = getattr(self, "_pawn_checked", 0) + 1
         text = self.sync.status if self.s["enabled"] else "Синхронизация выключена"
+        if not is_admin():
+            text += "\nБез прав администратора OpenRGB видит не все устройства (память, часть плат)."
         if getattr(self, "_dl_text", None):
             text = self._dl_text + "\n" + text
             if getattr(self, "_dl_done", False):

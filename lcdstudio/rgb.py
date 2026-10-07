@@ -206,6 +206,31 @@ def download_openrgb(progress=lambda text: None):
     return find_openrgb()
 
 
+PAWNIO_URL = "https://github.com/namazso/PawnIO.Setup/releases/latest/download/PawnIO_setup.exe"
+
+
+def pawnio_installed():
+    """Драйвер PawnIO: через него OpenRGB 1.0 и LibreHardwareMonitor читают SMBus (память, часть плат, температура CPU)."""
+    try:
+        r = subprocess.run(["sc", "query", "PawnIO"], capture_output=True, timeout=5, creationflags=0x08000000)
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def install_pawnio(progress=lambda text: None):
+    import ctypes
+    import tempfile
+    path = Path(tempfile.gettempdir()) / "PawnIO_setup.exe"
+    progress("Скачивание PawnIO...")
+    with urllib.request.urlopen(PAWNIO_URL, timeout=60) as r, open(path, "wb") as f:
+        f.write(r.read())
+    progress("Установка PawnIO — подтвердите запрос Windows")
+    r = ctypes.windll.shell32.ShellExecuteW(None, "runas", str(path), None, None, 1)
+    if r <= 32:
+        raise OSError(f"не удалось запустить установщик (код {r})")
+
+
 def openrgb_running(port=PORT):
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=0.5):
@@ -214,10 +239,50 @@ def openrgb_running(port=PORT):
         return False
 
 
+_job = None
+
+
+def _kill_with_us(proc):
+    """Job Object с KILL_ON_JOB_CLOSE: OpenRGB завершится вместе с LCD Studio, даже при аварийном выходе."""
+    global _job
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.windll.kernel32
+    k32.CreateJobObjectW.restype = wintypes.HANDLE
+    k32.OpenProcess.restype = wintypes.HANDLE
+    if _job is None:
+        class LIMITS(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class EXT(ctypes.Structure):
+            _fields_ = [("Basic", LIMITS), ("IoInfo", ctypes.c_uint64 * 6), ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+        job = k32.CreateJobObjectW(None, None)
+        info = EXT()
+        info.Basic.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not job or not k32.SetInformationJobObject(wintypes.HANDLE(job), 9, ctypes.byref(info), ctypes.sizeof(info)):
+            return
+        _job = job
+    h = k32.OpenProcess(0x0101, False, proc.pid)  # PROCESS_SET_QUOTA | PROCESS_TERMINATE
+    if h:
+        k32.AssignProcessToJobObject(wintypes.HANDLE(_job), wintypes.HANDLE(h))
+        k32.CloseHandle(wintypes.HANDLE(h))
+
+
 def start_openrgb(exe):
     # без --gui OpenRGB работает только сервером, без окна
-    return subprocess.Popen([str(exe), "--server", "--server-port", str(PORT), "--noautoconnect", "--localconfig"],
+    proc = subprocess.Popen([str(exe), "--server", "--server-port", str(PORT), "--noautoconnect", "--localconfig"],
                             cwd=str(Path(exe).parent), creationflags=0x08000000)
+    try:
+        _kill_with_us(proc)
+    except OSError:
+        pass
+    return proc
 
 
 # ---------- эффекты ----------
