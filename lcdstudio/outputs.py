@@ -29,10 +29,12 @@ class WindowOutput(QWidget):
 
 
 class Device:
-    """Интерфейс USB-драйвера экрана. Реализация появится, когда будет
-    известен контроллер экрана DEXP GS Ravager (VID/PID и протокол)."""
+    """Интерфейс драйвера экрана: open() -> bool, send(кадр), close().
+    state — текст для пользователя, resolution — родное разрешение экрана или None."""
 
     name = ""
+    state = ""
+    resolution = None
 
     def open(self) -> bool:
         raise NotImplementedError
@@ -44,4 +46,6 @@ class Device:
         pass
 
 
-DEVICES: list[type[Device]] = []
+from .usbscreen import UsbScreen  # noqa: E402
+
+DEVICES: list[type] = [UsbScreen]

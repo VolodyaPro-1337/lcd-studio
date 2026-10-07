@@ -18,7 +18,7 @@ DEFAULTS = {
     "scene_cycle_interval": 30,
     "window_output": False,
     "window_screen": "",
-    "device": "",
+    "device": "Экран корпуса (USB)",
     "sensor_interval": 1.0,
 }
 

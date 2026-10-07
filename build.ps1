@@ -32,5 +32,16 @@ $junk = "PySide6\opengl32sw.dll", "PySide6\Qt6Quick.dll", "PySide6\Qt6Qml.dll", 
     "PySide6\plugins\tls", "PIL\_avif.cp314-win_amd64.pyd"
 foreach ($j in $junk) { Remove-Item "$int\$j" -Recurse -Force -ErrorAction SilentlyContinue }
 
+# SDK USB-экрана и драйвер libusb из комплекта LCD Control (не в git — это файлы производителя)
+$vendorSrc = if ($env:LCDSTUDIO_VENDOR_SRC) { $env:LCDSTUDIO_VENDOR_SRC } else { "$root\..\inspection\app" }
+if (Test-Path "$vendorSrc\dll\x64\MSDISPLAYSDKWRRAPER.dll") {
+    $v = "$Dist\LCD Studio\vendor"
+    New-Item -ItemType Directory -Force $v | Out-Null
+    Copy-Item "$vendorSrc\dll\x64\MSDISPLAYSDKWRRAPER.dll", "$vendorSrc\dll\x64\AicUsbDisplay.dll" $v
+    Copy-Item "$vendorSrc\libusb" $v -Recurse -Force
+} else {
+    Write-Host "Внимание: SDK экрана не найден в $vendorSrc — USB-экран заработает только при установленной LCD Control"
+}
+
 $mb = [math]::Round((Get-ChildItem "$Dist\LCD Studio" -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
 Write-Host "Готово: $Dist\LCD Studio\LCD Studio.exe ($mb МБ)"

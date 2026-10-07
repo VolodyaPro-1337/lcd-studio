@@ -20,6 +20,8 @@ from .editor import CanvasEditor, render_scene
 from .model import FITS, TYPES, duplicate_item, new_item, new_scene
 from .outputs import DEVICES, WindowOutput
 from .props import build_editor, color_button
+from .rgb import RgbSync
+from .rgbpanel import RgbPanel
 from .monitor import AUTO_THRESHOLDS, DashboardSource
 from .sensorpicker import SensorPicker
 from .sensors import hub, is_admin
@@ -107,6 +109,7 @@ class MainWindow(QMainWindow):
         self.last_mark = 0
         self.window_out = WindowOutput()
         self.device = None
+        self._dev_res_seen = None
         self.save_timer = QTimer(self, singleShot=True, interval=400, timeout=lambda: config.save(self.cfg))
 
         self.setWindowTitle(TITLE)
@@ -130,6 +133,11 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.props_area, "Свойства слоя")
         self.tabs.addTab(self._output_panel(), "Экран корпуса")
         self.tabs.addTab(self._monitor_panel(), "Мониторинг")
+        self.last_frame = None
+        self.rgb = RgbSync(cfg, lambda: self.last_frame, hub.get)
+        self.tabs.addTab(RgbPanel(cfg, self.rgb, self.save), "Подсветка")
+        if cfg["rgb"]["enabled"]:
+            self.rgb.start()
         bottom.addWidget(self.tabs)
         bottom.setSizes([200, 280, 600])
 
@@ -736,10 +744,24 @@ class MainWindow(QMainWindow):
             self.dev_combo.setEnabled(False)
         self.dev_combo.currentIndexChanged.connect(
             lambda: (self._set_cfg("device", self.dev_combo.currentData()), self._apply_device()))
+        self.dev_combo.blockSignals(True)
+        self.dev_combo.setCurrentIndex(max(0, self.dev_combo.findData(self.cfg["device"])))
+        self.dev_combo.blockSignals(False)
         f.addRow("USB-экран:", self.dev_combo)
         self.status = QLabel()
         self.status.setWordWrap(True)
         f.addRow(self.status)
+        row = QHBoxLayout()
+        fit_btn = QPushButton("Холст под разрешение экрана")
+        fit_btn.clicked.connect(self._fit_canvas_to_device)
+        drv_btn = QPushButton("Установить драйвер экрана")
+        drv_btn.setToolTip("Драйвер libusb для экранов MacroSilicon из комплекта LCD Control (нужны права администратора)")
+        drv_btn.clicked.connect(self._install_driver)
+        row.addWidget(fit_btn)
+        row.addWidget(drv_btn)
+        f.addRow(row)
+        self.dev_timer = QTimer(self, interval=1000, timeout=self._update_dev_status)
+        self.dev_timer.start()
 
         auto = QCheckBox("Запускать вместе с Windows (свёрнутым в трей)")
         auto.setChecked(autostart_enabled())
@@ -812,7 +834,9 @@ class MainWindow(QMainWindow):
 
     def _refresh_scene_bg(self):
         while self.scene_bg.count():
-            self.scene_bg.takeAt(0).widget().deleteLater()
+            old = self.scene_bg.takeAt(0).widget()
+            old.hide()
+            old.deleteLater()
 
         def set_bg(v):
             self.mark(force=True)
@@ -853,9 +877,34 @@ class MainWindow(QMainWindow):
         dev = cls()
         if dev.open():
             self.device = dev
-            self.status.setText(f"Подключено: {cls.name}")
-        else:
-            self.status.setText(f"Экран не найден: {cls.name}")
+        self.status.setText(dev.state)
+        self._dev_res_seen = None
+
+    def _update_dev_status(self):
+        if not self.device:
+            return
+        self.status.setText(self.device.state)
+        res = self.device.resolution
+        if res and res != self._dev_res_seen:
+            self._dev_res_seen = res
+            # при первом подключении подгоняем холст, если он ещё не под этот экран
+            if res != (self.cfg["width"], self.cfg["height"]) and self.cfg.get("auto_fit_device", True):
+                self._fit_canvas_to_device()
+
+    def _fit_canvas_to_device(self):
+        res = self.device.resolution if self.device else None
+        if not res:
+            self.status.setText("Экран ещё не подключён — разрешение неизвестно")
+            return
+        w, h = res
+        if self.cfg["rotation"] in (90, 270):
+            w, h = h, w
+        self.res_combo.setCurrentText(f"{w}x{h}")
+
+    def _install_driver(self):
+        from .usbscreen import install_driver
+        err = install_driver()
+        self.status.setText(err or "Установка драйвера запущена. После неё переподключите экран.")
 
     # ---------- кадр ----------
 
@@ -871,6 +920,7 @@ class MainWindow(QMainWindow):
 
     def tick(self):
         frame = self.render()
+        self.last_frame = frame
         if self.isVisible() and not self.isMinimized():
             self.editor.set_frame(frame)
         rot = self.cfg["rotation"]
@@ -913,6 +963,7 @@ class MainWindow(QMainWindow):
 
     def _quit(self):
         self.timer.stop()
+        self.rgb.stop()
         hub.shutdown()
         for _, src in self.sources.values():
             src.stop()
